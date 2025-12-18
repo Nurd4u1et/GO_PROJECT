@@ -5,15 +5,20 @@ import (
 	"clinic-cli/auth"
 	"clinic-cli/core"
 	"clinic-cli/db"
+	"database/sql"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"syscall"
 
+	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/term"
 )
 
 func main() {
+	go startHTTPServer()
 	db.InitDB()
 	fmt.Println("Welcome ,please choose")
 
@@ -164,6 +169,31 @@ func bookAppointment(scanner *bufio.Scanner) {
 	}
 }
 
+func getUsersFromDB() ([]string, error) {
+	dbConn, err := sql.Open("sqlite3", "clinic.db")
+	if err != nil {
+		return nil, err
+	}
+	defer dbConn.Close()
+
+	rows, err := dbConn.Query("SELECT username FROM users")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []string
+	for rows.Next() {
+		var username string
+		if err := rows.Scan(&username); err != nil {
+			return nil, err
+		}
+		users = append(users, username)
+	}
+
+	return users, nil
+}
+
 func listMyAppointments() {
 	apps, err := core.ListMyAppointments()
 	if err != nil {
@@ -179,4 +209,82 @@ func listMyAppointments() {
 	for _, a := range apps {
 		fmt.Printf("- %s with %s (%s)\n", a.DateTime, a.DoctorName, a.Specialization)
 	}
+}
+
+func startHTTPServer() {
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Doctor Appointment API is running"))
+	})
+
+	http.HandleFunc("/appointments", func(w http.ResponseWriter, r *http.Request) {
+		data, err := getAppointmentsDetailed()
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(err.Error()))
+			return
+		}
+		json.NewEncoder(w).Encode(data)
+	})
+
+	http.HandleFunc("/doctors", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`["Dr. Smith", "Dr. Brown"]`))
+	})
+
+	http.HandleFunc("/users", func(w http.ResponseWriter, r *http.Request) {
+		users, err := getUsersFromDB()
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(err.Error()))
+			return
+		}
+		json.NewEncoder(w).Encode(users)
+	})
+
+	http.ListenAndServe(":8080", nil)
+}
+
+type AppointmentResponse struct {
+	ID       int    `json:"id"`
+	User     string `json:"user"`
+	Doctor   string `json:"doctor"`
+	DateTime string `json:"datetime"`
+}
+
+func getAppointmentsDetailed() ([]AppointmentResponse, error) {
+	dbConn, err := sql.Open("sqlite3", "clinic.db")
+	if err != nil {
+		return nil, err
+	}
+	defer dbConn.Close()
+
+	query := `
+	SELECT 
+		a.id,
+		u.username,
+		d.name,
+		a.datetime
+	FROM appointments a
+	JOIN users u ON a.user_id = u.id
+	JOIN doctors d ON a.doctor_id = d.id
+	`
+
+	rows, err := dbConn.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := []AppointmentResponse{}
+
+	for rows.Next() {
+		var ap AppointmentResponse
+		if err := rows.Scan(&ap.ID, &ap.User, &ap.Doctor, &ap.DateTime); err != nil {
+			return nil, err
+		}
+		result = append(result, ap)
+	}
+
+	return result, nil
 }
