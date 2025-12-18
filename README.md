@@ -13,4 +13,5 @@ The project is completed as an MVP and ready for demonstration.
 
 ## Run with Docker
 docker build -t doctor-api .
+
 docker run -p 8080:8080 doctor-api
