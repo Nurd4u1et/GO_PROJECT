@@ -1,6 +1,0 @@
-clinic.exe
-*.exe
-*.db
-.env
-.idea/
-.vscode/
